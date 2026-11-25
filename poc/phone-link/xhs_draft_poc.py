@@ -63,8 +63,13 @@ def gate(msg: str, auto: bool) -> None:
 
 # ---------------------------------------------------------------- step 1
 def open_phone_link() -> None:
-    subprocess.Popen(["explorer.exe", PHONE_LINK_AUMID])
-    log("step1_open_phone_link", method="AUMID")
+    # Primary: ms-phone: URI. Fallback: AUMID (verify with `Get-StartApps | ? Name -like '*Phone*'`).
+    try:
+        subprocess.Popen(["cmd", "/c", "start", "", "ms-phone:"])
+        log("step1_open_phone_link", method="ms-phone URI")
+    except OSError:
+        subprocess.Popen(["explorer.exe", PHONE_LINK_AUMID])
+        log("step1_open_phone_link", method="AUMID")
     time.sleep(5)
 
 
@@ -92,6 +97,10 @@ def open_xhs(auto: bool):
 
             pl = Desktop(backend="uia").window(title_re=".*Phone Link.*|.*โทรศัพท์.*|.*连接至.*")
             pl.set_focus()
+            from pywinauto.keyboard import send_keys
+
+            send_keys("^3")  # Ctrl+3 = Apps pane (official Phone Link shortcut)
+            time.sleep(2)
             for name in XHS_TITLES:
                 hits = pl.descendants(title=name)
                 if hits:
