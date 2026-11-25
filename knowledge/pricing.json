@@ -1,0 +1,36 @@
+{
+  "source": "GitHub Issue #1 (Bo -> Jiho), updated 2026-11-25",
+  "currency": "THB",
+  "note": "Reference prices for draft replies only. Not a booking or final price confirmation.",
+  "routes": [
+    {"id": "BKK-BANGKOK", "label_th": "สุวรรณภูมิ (BKK) ↔ กรุงเทพฯ", "label_zh": "素万那普机场（BKK）↔ 曼谷市区", "price": 700, "unit": "trip",
+     "includes": ["ทางด่วน", "ค่าจอดรถ"], "meeting_point": "ชั้น 3 ประตู 8", "meeting_point_zh": "3楼8号门"},
+    {"id": "DMK-BANGKOK", "label_th": "ดอนเมือง (DMK) ↔ กรุงเทพฯ", "label_zh": "廊曼机场（DMK）↔ 曼谷市区", "price": 850, "unit": "trip",
+     "includes": ["ทางด่วน", "ค่าจอดรถ"]},
+    {"id": "BANGKOK-PATTAYA", "label_th": "กรุงเทพฯ ↔ พัทยา", "label_zh": "曼谷 ↔ 芭提雅", "price_min": 1500, "price_max": 1700, "unit": "trip"},
+    {"id": "BANGKOK-KHAOYAI", "label_th": "กรุงเทพฯ ↔ เขาใหญ่", "label_zh": "曼谷 ↔ 考艾", "price": 4000, "unit": "trip"},
+    {"id": "NAKHONPATHOM-DAY", "label_th": "นครปฐม เหมาวัน (~9–10 ชม.)", "label_zh": "佛统包车一天（约9–10小时）", "price": 3500, "unit": "day"},
+    {"id": "AYUTTHAYA-DAY", "label_th": "อยุธยา เหมาวัน", "label_zh": "大城包车一天", "price": 3500, "unit": "day"},
+    {"id": "SAFARI-WORLD", "label_th": "Safari World รับ–ส่ง", "label_zh": "赛福瑞野生动物园接送", "price": 2000, "unit": "trip",
+     "needs_detail_check": true}
+  ],
+  "night_surcharge": {"start": "22:00", "end": "06:00", "amount": 200, "per": "trip", "applies_to_unit": "trip"},
+  "deposit": {"amount": 500, "deducted_from_total": true},
+  "vehicle": {
+    "model": "MG4 EV",
+    "seats_including_driver": 5,
+    "recommended_max_passengers": 3,
+    "max_bag_inch": 28,
+    "bag_count_limit": null,
+    "infants_count_as_passengers": true
+  },
+  "aliases": {
+    "BKK": ["bkk", "suvarnabhumi", "素万那普", "素萬那普", "สุวรรณภูมิ"],
+    "DMK": ["dmk", "don mueang", "donmueang", "廊曼", "ดอนเมือง"],
+    "PATTAYA": ["pattaya", "芭提雅", "芭達雅", "พัทยา"],
+    "KHAOYAI": ["khao yai", "khaoyai", "考艾", "เขาใหญ่"],
+    "NAKHONPATHOM": ["nakhon pathom", "佛统", "佛統", "นครปฐม"],
+    "AYUTTHAYA": ["ayutthaya", "大城", "อยุธยา"],
+    "SAFARI-WORLD": ["safari world", "赛福瑞", "賽福瑞", "野生动物园", "ซาฟารี"]
+  }
+}
