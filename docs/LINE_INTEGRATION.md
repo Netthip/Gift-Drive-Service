@@ -28,6 +28,8 @@
 
 ## รัน
 ```bash
+# 0) ตรวจการตั้งค่า: บอกแค่ set/missing ไม่แสดงค่าลับ + ลองอ่าน KV 1 ครั้ง
+python -m gpr.line_inbox check
 # ทดสอบด้วยข้อมูลจำลอง (ไม่ต้องมี token)
 python -m gpr.line_inbox pull --env test --source file --path tests/fixtures/line_webhook_synthetic.json
 # ของจริง (read-only)

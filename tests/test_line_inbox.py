@@ -229,3 +229,45 @@ def test_kv_skip_avoids_value_reads(tmp_path):
     src = KVSource({"CF_ACCOUNT_ID": "a", "CF_KV_NAMESPACE_ID": "n", "CF_API_TOKEN": "t"}, opener=opener)
     s = pull(src.items(skip=lambda k: store.seen(kv_key_to_dedup(k))), c, store=store)
     assert len(gets) == 1 and s["new"] == 1  # only the unseen key was fetched
+
+
+# ---------------------------------------------------------------- preflight check
+import urllib.error
+
+from gpr.line_inbox import check
+
+SECRET = "cfut_FAKE_TOKEN_FOR_TEST_ONLY_1234567890"
+ENV_OK = {"CF_ACCOUNT_ID": "acc", "CF_KV_NAMESPACE_ID": "ns", "CF_API_TOKEN": SECRET, "GPR_TEST_USER_IDS": U1}
+
+
+class _R:
+    def __init__(self, b): self.b = b
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def read(self): return self.b
+
+
+def test_check_ok_never_prints_secret(tmp_path):
+    lines = []
+    ok = check({**ENV_OK, "GPR_DATA_DIR": str(tmp_path)},
+               opener=lambda r, timeout: _R(json.dumps({"success": True, "result": [{"name": "event:x"}], "result_info": {}}).encode()),
+               out=lines.append)
+    text = "\n".join(lines)
+    assert ok and "KV read OK" in text and SECRET not in text and "GPR_ID_SALT          missing" in text
+
+
+def test_check_403_and_missing(tmp_path):
+    def deny(req, timeout):
+        raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", {}, None)
+    lines = []
+    assert not check({**ENV_OK, "GPR_DATA_DIR": str(tmp_path)}, opener=deny, out=lines.append)
+    assert any("HTTP 403" in x and "KV Storage: Read" in x for x in lines) and SECRET not in "\n".join(lines)
+    lines = []
+    assert not check({"GPR_DATA_DIR": str(tmp_path)}, out=lines.append)
+    assert any("SKIPPED" in x for x in lines)
+
+
+def test_check_warns_data_dir_in_repo():
+    lines = []
+    check({"GPR_DATA_DIR": str(ROOT / "data")}, out=lines.append)
+    assert any("inside the repo" in x for x in lines)

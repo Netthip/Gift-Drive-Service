@@ -36,6 +36,7 @@ import json
 import os
 import sqlite3
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -322,6 +323,42 @@ class Store:
         return True
 
 
+# --------------------------------------------------------------------------- preflight
+CHECK_VARS = ("CF_ACCOUNT_ID", "CF_KV_NAMESPACE_ID", "CF_API_TOKEN", "GPR_TEST_USER_IDS", "GPR_ID_SALT", "GPR_DATA_DIR")
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def check(environ: dict | None = None, opener=urllib.request.urlopen, out=print) -> bool:
+    """Report setup status without printing any secret value. True only if a KV read works."""
+    e = os.environ if environ is None else environ
+    for name in CHECK_VARS:
+        val = e.get(name, "")
+        if not val:
+            out(f"{name:20} missing")
+        elif name == "CF_API_TOKEN":
+            out(f"{name:20} set ({len(val)} chars)")
+        elif name == "GPR_TEST_USER_IDS":
+            out(f"{name:20} set ({len([x for x in val.split(',') if x.strip()])} id)")
+        else:
+            out(f"{name:20} set")
+    data_dir = Path(e.get("GPR_DATA_DIR", Path.home() / ".gpr")).expanduser().resolve()
+    if data_dir == REPO_ROOT or REPO_ROOT in data_dir.parents:
+        out("WARNING: GPR_DATA_DIR is inside the repo - move it outside")
+    if not all(e.get(n) for n in CHECK_VARS[:3]):
+        out("KV read SKIPPED (Cloudflare variables missing)")
+        return False
+    try:
+        n = len(KVSource(e, opener=opener).keys(prefix=KV_PREFIX, limit=1))
+        out(f"KV read OK ({n} key visible with prefix {KV_PREFIX!r})")
+        return True
+    except urllib.error.HTTPError as err:
+        hint = " - token lacks Workers KV Storage: Read, or wrong account/namespace ID" if err.code in (401, 403, 404) else ""
+        out(f"KV read FAILED: HTTP {err.code}{hint}")
+    except Exception as err:  # network, JSON, API error
+        out(f"KV read FAILED: {type(err).__name__}")
+    return False
+
+
 # --------------------------------------------------------------------------- pipeline
 def pull(items: Iterable[RawItem], cfg: Config, only_test_users: bool = False, store: "Store | None" = None) -> dict:
     """only_test_users: drop (do not store) events whose sender is not in GPR_TEST_USER_IDS."""
@@ -355,8 +392,11 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--path", type=Path)
     p.add_argument("--prefix", default=KV_PREFIX)
     p.add_argument("--limit", type=int, default=1000)
+    sub.add_parser("check", help="verify setup (prints no secrets, one read-only KV call)")
     a = ap.parse_args(argv)
 
+    if a.cmd == "check":
+        sys.exit(0 if check() else 1)
     cfg = Config.from_env(a.env)
     if a.source == "file":
         if not a.path:
