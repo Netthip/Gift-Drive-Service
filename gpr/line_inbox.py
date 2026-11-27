@@ -19,7 +19,13 @@ Config comes only from environment variables (never from the repo or chat):
 
 Usage
   python -m gpr.line_inbox pull --env test --source file --path tests/fixtures/line_webhook_synthetic.json
-  python -m gpr.line_inbox pull --env prod --source kv [--prefix PREFIX] [--limit 200]
+  python -m gpr.line_inbox pull --env prod --source kv [--limit 1000]
+  python -m gpr.line_inbox pull --env test --source kv    # keeps ONLY events from GPR_TEST_USER_IDS
+
+Real KV layout (gpr-line-webhook worker.js, provided by Bo):
+  key   "event:<webhookEventId>"   (expirationTtl 30 days; redelivery overwrites the same key)
+  value {"id": webhookEventId, "timestamp": ms, "source": {...},
+         "message": {"id", "type", "text"?}}   # only message events are stored
 """
 from __future__ import annotations
 
@@ -42,6 +48,7 @@ from gpr.pricing import resolve_route
 
 SCHEMA_VERSION = "1.0"
 ENVS = ("test", "prod")
+KV_PREFIX = "event:"  # key prefix written by gpr-line-webhook
 ADMIN_PREFIX = "#GPR"
 ADMIN_COMMANDS = {  # rich menu (line/richmenu/richmenu.json) -> command id for Bo
     "แปลแชท": "translate_chat",
@@ -136,8 +143,11 @@ class KVSource:
                 break
         return out[:limit]
 
-    def items(self, prefix: str = "", limit: int = 200) -> Iterator[RawItem]:
+    def items(self, prefix: str = KV_PREFIX, limit: int = 1000, skip=None) -> Iterator[RawItem]:
+        """skip(key) -> True avoids a value GET for keys already processed (saves KV reads)."""
         for key in self.keys(prefix, limit):
+            if skip and skip(key):
+                continue
             raw = self._get("/values/" + urllib.parse.quote(key, safe=""))
             try:
                 yield RawItem(key, json.loads(raw))
@@ -167,7 +177,20 @@ def extract_events(payload: object) -> list[dict]:
                 return found
     if "type" in payload and ("webhookEventId" in payload or "message" in payload):
         return [payload]
+    if isinstance(payload.get("message"), dict) and payload.get("id"):
+        # gpr-line-webhook record: {id, timestamp, source, message{id,type,text?}}
+        return [{
+            "type": "message",
+            "webhookEventId": payload["id"],
+            "timestamp": payload.get("timestamp"),
+            "source": payload.get("source") or {},
+            "message": payload["message"],
+        }]
     return []
+
+
+def kv_key_to_dedup(key: str) -> str | None:
+    return "line:evt:" + key[len(KV_PREFIX):] if key.startswith(KV_PREFIX) else None
 
 
 def _ref(prefix: str, raw: str | None, salt: bytes) -> str | None:
@@ -277,6 +300,12 @@ class Store:
             self._db[env] = c
         return self._db[env]
 
+    def seen(self, dkey: str) -> bool:
+        return any(
+            self._conn(env).execute("SELECT 1 FROM processed WHERE dedup_key=?", (dkey,)).fetchone()
+            for env in ENVS
+        )
+
     def accept(self, rec: dict) -> bool:
         """Write rec to its env outbox once. Returns False for duplicates."""
         env = rec["env"]
@@ -294,9 +323,10 @@ class Store:
 
 
 # --------------------------------------------------------------------------- pipeline
-def pull(items: Iterable[RawItem], cfg: Config) -> dict:
-    store, pricing_data = Store(cfg), load_pricing()
-    stats = {"read": 0, "new": 0, "duplicate": 0, "unparsed": 0, "by_env": {"test": 0, "prod": 0}}
+def pull(items: Iterable[RawItem], cfg: Config, only_test_users: bool = False, store: "Store | None" = None) -> dict:
+    """only_test_users: drop (do not store) events whose sender is not in GPR_TEST_USER_IDS."""
+    store, pricing_data = store or Store(cfg), load_pricing()
+    stats = {"read": 0, "new": 0, "duplicate": 0, "unparsed": 0, "skipped_non_test": 0, "by_env": {"test": 0, "prod": 0}}
     for item in items:
         events = extract_events(item.payload)
         if not events:
@@ -304,6 +334,9 @@ def pull(items: Iterable[RawItem], cfg: Config) -> dict:
             continue
         for ev in events:
             stats["read"] += 1
+            if only_test_users and (ev.get("source") or {}).get("userId") not in cfg.test_user_ids:
+                stats["skipped_non_test"] += 1
+                continue
             rec = normalise(ev, item.key, cfg, pricing_data)
             if store.accept(rec):
                 stats["new"] += 1
@@ -320,8 +353,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--env", required=True, choices=ENVS)
     p.add_argument("--source", required=True, choices=("file", "kv"))
     p.add_argument("--path", type=Path)
-    p.add_argument("--prefix", default="")
-    p.add_argument("--limit", type=int, default=200)
+    p.add_argument("--prefix", default=KV_PREFIX)
+    p.add_argument("--limit", type=int, default=1000)
     a = ap.parse_args(argv)
 
     cfg = Config.from_env(a.env)
@@ -330,9 +363,15 @@ def main(argv: list[str] | None = None) -> None:
             ap.error("--path is required for --source file")
         items = file_source(a.path)
     else:
-        if a.env == "test" and not a.prefix:
-            ap.error("--env test with --source kv needs --prefix (keep test keys separate)")
-        items = KVSource().items(a.prefix, a.limit)
+        # The worker writes test and real chats under the same prefix, so test mode
+        # keeps only events from GPR_TEST_USER_IDS and discards everything else.
+        if a.env == "test" and not cfg.test_user_ids:
+            ap.error("--env test with --source kv needs GPR_TEST_USER_IDS")
+        store = Store(cfg)
+        items = KVSource().items(a.prefix, a.limit, skip=lambda k: (d := kv_key_to_dedup(k)) is not None and store.seen(d))
+        stats = pull(items, cfg, only_test_users=(a.env == "test"), store=store)
+        print(json.dumps({"env": a.env, "outbox_dir": str(cfg.data_dir), **stats}, ensure_ascii=False))
+        return
     stats = pull(items, cfg)
     print(json.dumps({"env": a.env, "outbox_dir": str(cfg.data_dir), **stats}, ensure_ascii=False))
 

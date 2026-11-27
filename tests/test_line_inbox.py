@@ -46,7 +46,7 @@ def test_text_and_image_normalised(tmp_path):
 def test_dedup_redelivery_and_rerun(tmp_path):
     c = cfg(tmp_path)
     s1 = pull(file_source(FIX), c)
-    assert s1 == {"read": 6, "new": 5, "duplicate": 1, "unparsed": 1, "by_env": {"test": 5, "prod": 0}}
+    assert s1 == {"read": 6, "new": 5, "duplicate": 1, "unparsed": 1, "skipped_non_test": 0, "by_env": {"test": 5, "prod": 0}}
     s2 = pull(file_source(FIX), c)  # same data again -> nothing new
     assert s2["new"] == 0 and s2["duplicate"] == 6
     keys = [r["dedup_key"] for r in outbox(tmp_path, "test")]
@@ -167,3 +167,65 @@ def test_richmenu_commands_match_adapter():
         t = a["action"]["text"]
         assert t.startswith(ADMIN_PREFIX) and t[len(ADMIN_PREFIX):].strip() in ADMIN_COMMANDS
     assert menu["name"].startswith("gpr-admin")
+
+
+# ---------------------------------------------------------------- real worker.js KV layout
+KVFIX = ROOT / "tests" / "fixtures" / "line_kv_worker_synthetic.json"
+
+
+def test_worker_record_shape_parsed(tmp_path):
+    c = cfg(tmp_path, GPR_ADMIN_USER_IDS=ADMIN)
+    s = pull(file_source(KVFIX), c)
+    assert s["unparsed"] == 0 and s["new"] == 4
+    recs = {r["kv_key"]: r for r in outbox(tmp_path, "test")}
+    t = recs["event:01TESTKV00000000000000001"]
+    assert t["dedup_key"] == "line:evt:01TESTKV00000000000000001"
+    assert t["message"]["type"] == "text" and t["pricing_hint"]["route_id"] == "DMK-BANGKOK"
+    assert recs["event:01TESTKV00000000000000002"]["message"]["image"]["content_provider"] == "line"
+    assert recs["event:01TESTKV00000000000000003"]["admin_command"] == "daily_summary"
+    g = recs["event:01TESTKV00000000000000004"]
+    assert "group_or_room_source" in g["needs_review"] and g["source"]["group_ref"].startswith("grp_")
+    for r in recs.values():
+        _check_schema(r, SCHEMA)
+
+
+def test_kv_key_maps_to_same_dedup_as_record(tmp_path):
+    from gpr.line_inbox import kv_key_to_dedup
+    pull(file_source(KVFIX), cfg(tmp_path))
+    for r in outbox(tmp_path, "test"):
+        assert kv_key_to_dedup(r["kv_key"]) == r["dedup_key"]
+    assert kv_key_to_dedup("other:1") is None
+
+
+def test_test_mode_keeps_only_test_users(tmp_path):
+    c = cfg(tmp_path, GPR_TEST_USER_IDS=U1)
+    s = pull(file_source(KVFIX), c, only_test_users=True)
+    assert s["new"] == 1 and s["skipped_non_test"] == 3
+    assert not (tmp_path / "prod" / "outbox.jsonl").exists()
+
+
+def test_kv_skip_avoids_value_reads(tmp_path):
+    from gpr.line_inbox import Store, kv_key_to_dedup
+    c = cfg(tmp_path)
+    store = Store(c)
+    pull(file_source(KVFIX), c, store=store)  # first run stores all 4
+    gets = []
+
+    class Resp:
+        def __init__(self, b): self.b = b
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return self.b
+
+    names = [{"name": "event:01TESTKV0000000000000000" + i} for i in "12345"]
+
+    def opener(req, timeout):
+        if "/keys" in req.full_url:
+            return Resp(json.dumps({"success": True, "result": names, "result_info": {"cursor": ""}}).encode())
+        gets.append(req.full_url)
+        return Resp(json.dumps({"id": "01TESTKV00000000000000005", "timestamp": 1, "source": {"type": "user", "userId": U1},
+                                "message": {"id": "5", "type": "text", "text": "hi"}}).encode())
+
+    src = KVSource({"CF_ACCOUNT_ID": "a", "CF_KV_NAMESPACE_ID": "n", "CF_API_TOKEN": "t"}, opener=opener)
+    s = pull(src.items(skip=lambda k: store.seen(kv_key_to_dedup(k))), c, store=store)
+    assert len(gets) == 1 and s["new"] == 1  # only the unseen key was fetched
