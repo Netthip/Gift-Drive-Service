@@ -45,6 +45,18 @@ python -m gpr.handoff --record rec.json --booking booking.json
 - เก็บใน `GPR_DATA_DIR/<env>/state.sqlite` แยก test/prod · รันซ้ำกี่ครั้งก็ไม่เพิ่มรายการซ้ำ
 - adapter ไม่ลบ key ใน KV (read-only) — ควรตั้ง TTL ใน Worker ภายหลังถ้าต้องการลดข้อมูลค้าง (ต้องให้ Gift อนุมัติ)
 
+## ส่งรูปแล้วอ่านได้ไหม? (สรุปสั้น)
+- **Worker** เก็บแค่ "มีรูปมา + รหัสรูป" ไม่ได้เก็บไฟล์รูป
+- **`fetch-images` / `sync`** ดึงไฟล์รูปจาก LINE ด้วยรหัสนั้น มาเก็บที่ `GPR_DATA_DIR/<env>/images/` บนเครื่อง Gift (ไม่ขึ้น GitHub)
+- จากนั้นจีโฮ/โบเปิดรูปอ่านได้ (เช่น แปลข้อความจีนในรูป ดูขนาดกระเป๋า) · **สลิป = หลักฐานรอ Gift ตรวจ ไม่ใช่ยืนยันเงิน**
+- ต้องตั้ง `LINE_CHANNEL_ACCESS_TOKEN` (LINE Developers → Messaging API → Channel access token) เป็นตัวแปรระบบบนเครื่อง · ห้ามวางในแชท
+- LINE เก็บไฟล์ให้ดึงได้ช่วงเวลาจำกัด → ดึงเร็วหลังลูกค้าส่ง (ถ้าหมดอายุจะนับเป็น `expired`)
+
+คำสั่งเดียวจบ (ดึงข้อความจาก KV + ดึงรูป):
+```bash
+python -m gpr.line_inbox sync --env test
+```
+
 ## รูปภาพ
 บันทึกแค่ `message.id` + ผู้ให้บริการเนื้อหา · ไฟล์ภาพต้องดึงจาก LINE Content API ด้วย channel token ฝั่งเซิร์ฟเวอร์เท่านั้น (ยังไม่ทำใน Phase 1) · ทุกภาพติดธง `image_needs_human_check` — **ภาพสลิปเป็นหลักฐานรอตรวจ ไม่ใช่การยืนยันชำระเงิน**
 

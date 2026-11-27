@@ -271,3 +271,69 @@ def test_check_warns_data_dir_in_repo():
     lines = []
     check({"GPR_DATA_DIR": str(ROOT / "data")}, out=lines.append)
     assert any("inside the repo" in x for x in lines)
+
+
+# ---------------------------------------------------------------- image download
+from gpr.line_inbox import LineTokenError, fetch_images
+
+LINE_TOKEN = "LINE_FAKE_CHANNEL_TOKEN_abcdef123456"
+
+
+class _IR:
+    def __init__(self, body, ctype):
+        self.body, self.headers = body, {"Content-Type": ctype}
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def read(self): return self.body
+
+
+def _seed(tmp_path):
+    c = cfg(tmp_path)
+    pull(file_source(KVFIX), c)  # contains 1 image record
+    return c
+
+
+def test_fetch_images_saves_privately_and_skips_done(tmp_path):
+    c = _seed(tmp_path)
+    calls = []
+
+    def opener(req, timeout):
+        calls.append(req.full_url)
+        assert req.get_method() == "GET" and "api-data.line.me/v2/bot/message/910000000000000002/content" in req.full_url
+        return _IR(b"\x89PNG fake", "image/png")
+
+    s = fetch_images(c, "test", environ={"LINE_CHANNEL_ACCESS_TOKEN": LINE_TOKEN}, opener=opener)
+    assert s["images_found"] == 1 and s["fetched"] == 1
+    files = list((tmp_path / "test" / "images").iterdir())
+    assert len(files) == 1 and files[0].suffix == ".png" and str(files[0]).startswith(str(tmp_path))
+    s2 = fetch_images(c, "test", environ={"LINE_CHANNEL_ACCESS_TOKEN": LINE_TOKEN}, opener=opener)
+    assert s2["already"] == 1 and s2["fetched"] == 0 and len(calls) == 1
+    assert LINE_TOKEN not in json.dumps(s) + json.dumps(s2)
+
+
+def test_fetch_images_expired_and_bad_token(tmp_path):
+    c = _seed(tmp_path)
+
+    def gone(req, timeout):
+        raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+
+    s = fetch_images(c, "test", environ={"LINE_CHANNEL_ACCESS_TOKEN": LINE_TOKEN}, opener=gone)
+    assert s["expired"] == 1 and not any((tmp_path / "test" / "images").iterdir())
+
+    c2 = _seed(tmp_path / "b")
+
+    def denied(req, timeout):
+        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+
+    with pytest.raises(LineTokenError) as e:
+        fetch_images(c2, "test", environ={"LINE_CHANNEL_ACCESS_TOKEN": LINE_TOKEN}, opener=denied)
+    assert LINE_TOKEN not in str(e.value)
+    with pytest.raises(LineTokenError):
+        fetch_images(c2, "test", environ={})
+
+
+def test_payment_never_confirmed_by_image(tmp_path):
+    c = _seed(tmp_path)
+    fetch_images(c, "test", environ={"LINE_CHANNEL_ACCESS_TOKEN": LINE_TOKEN},
+                 opener=lambda r, timeout: _IR(b"x", "image/jpeg"))
+    assert all(r["payment_confirmed"] is False for r in outbox(tmp_path, "test"))

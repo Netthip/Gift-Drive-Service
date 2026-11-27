@@ -324,7 +324,9 @@ class Store:
 
 
 # --------------------------------------------------------------------------- preflight
-CHECK_VARS = ("CF_ACCOUNT_ID", "CF_KV_NAMESPACE_ID", "CF_API_TOKEN", "GPR_TEST_USER_IDS", "GPR_ID_SALT", "GPR_DATA_DIR")
+CHECK_VARS = ("CF_ACCOUNT_ID", "CF_KV_NAMESPACE_ID", "CF_API_TOKEN", "LINE_CHANNEL_ACCESS_TOKEN",
+              "GPR_TEST_USER_IDS", "GPR_ID_SALT", "GPR_DATA_DIR")
+SECRET_VARS = ("CF_API_TOKEN", "LINE_CHANNEL_ACCESS_TOKEN")
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -335,7 +337,7 @@ def check(environ: dict | None = None, opener=urllib.request.urlopen, out=print)
         val = e.get(name, "")
         if not val:
             out(f"{name:20} missing")
-        elif name == "CF_API_TOKEN":
+        elif name in SECRET_VARS:
             out(f"{name:20} set ({len(val)} chars)")
         elif name == "GPR_TEST_USER_IDS":
             out(f"{name:20} set ({len([x for x in val.split(',') if x.strip()])} id)")
@@ -357,6 +359,75 @@ def check(environ: dict | None = None, opener=urllib.request.urlopen, out=print)
     except Exception as err:  # network, JSON, API error
         out(f"KV read FAILED: {type(err).__name__}")
     return False
+
+
+# --------------------------------------------------------------------------- images
+LINE_CONTENT_API = "https://api-data.line.me/v2/bot/message/{id}/content"
+IMAGE_EXT = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp"}
+
+
+class LineTokenError(RuntimeError):
+    pass
+
+
+def fetch_images(cfg: Config, env: str, limit: int = 50, environ: dict | None = None,
+                 opener=urllib.request.urlopen) -> dict:
+    """Download image bytes for image records in <env>/outbox.jsonl (LINE Content API, GET only).
+
+    Files go to GPR_DATA_DIR/<env>/images/ (outside the repo). Images are evidence for Gift to
+    check - a payment slip never sets payment_confirmed.
+    """
+    e = os.environ if environ is None else environ
+    token = e.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    stats = {"env": env, "images_found": 0, "fetched": 0, "already": 0, "expired": 0, "failed": 0}
+    base = cfg.dir_for(env)
+    box = base / "outbox.jsonl"
+    if not box.exists():
+        return stats
+    if not token:
+        raise LineTokenError("LINE_CHANNEL_ACCESS_TOKEN not set")
+    img_dir = base / "images"
+    img_dir.mkdir(exist_ok=True)
+    db = sqlite3.connect(base / "state.sqlite")
+    db.execute("CREATE TABLE IF NOT EXISTS images (dedup_key TEXT PRIMARY KEY, path TEXT, status TEXT, fetched_at TEXT)")
+    done = {k for (k,) in db.execute("SELECT dedup_key FROM images WHERE status IN ('ok','expired')")}
+    todo = []
+    for line in box.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        rec = json.loads(line)
+        if (rec.get("message") or {}).get("type") != "image" or not rec["message"].get("id"):
+            continue
+        stats["images_found"] += 1
+        if rec["dedup_key"] in done:
+            stats["already"] += 1
+        else:
+            todo.append(rec)
+    for rec in todo[:limit]:
+        req = urllib.request.Request(LINE_CONTENT_API.format(id=urllib.parse.quote(str(rec["message"]["id"]), safe="")),
+                                     headers={"Authorization": f"Bearer {token}"}, method="GET")
+        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in rec["dedup_key"])
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            with opener(req, timeout=60) as r:
+                ctype = (r.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip()
+                path = img_dir / (safe + IMAGE_EXT.get(ctype, ".bin"))
+                path.write_bytes(r.read())
+            status = "ok"
+            stats["fetched"] += 1
+        except urllib.error.HTTPError as err:
+            if err.code in (401, 403):
+                db.close()
+                raise LineTokenError(f"LINE Content API HTTP {err.code} - check LINE_CHANNEL_ACCESS_TOKEN")
+            path, status = None, ("expired" if err.code in (404, 410) else "failed")
+            stats["expired" if status == "expired" else "failed"] += 1
+        except Exception:
+            path, status = None, "failed"
+            stats["failed"] += 1
+        with db:
+            db.execute("INSERT OR REPLACE INTO images VALUES (?,?,?,?)", (rec["dedup_key"], str(path) if path else None, status, now))
+    db.close()
+    return stats
 
 
 # --------------------------------------------------------------------------- pipeline
@@ -393,11 +464,31 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--prefix", default=KV_PREFIX)
     p.add_argument("--limit", type=int, default=1000)
     sub.add_parser("check", help="verify setup (prints no secrets, one read-only KV call)")
+    f = sub.add_parser("fetch-images", help="download image files for image messages (private dir)")
+    f.add_argument("--env", required=True, choices=ENVS)
+    f.add_argument("--limit", type=int, default=50)
+    y = sub.add_parser("sync", help="pull from KV + fetch-images in one step (prints counts only)")
+    y.add_argument("--env", required=True, choices=ENVS)
+    y.add_argument("--limit", type=int, default=1000)
     a = ap.parse_args(argv)
 
     if a.cmd == "check":
         sys.exit(0 if check() else 1)
     cfg = Config.from_env(a.env)
+    if a.cmd in ("fetch-images", "sync"):
+        out = {}
+        if a.cmd == "sync":
+            if a.env == "test" and not cfg.test_user_ids:
+                ap.error("--env test needs GPR_TEST_USER_IDS")
+            store = Store(cfg)
+            items = KVSource().items(KV_PREFIX, a.limit, skip=lambda k: (d := kv_key_to_dedup(k)) is not None and store.seen(d))
+            out["messages"] = pull(items, cfg, only_test_users=(a.env == "test"), store=store)
+        try:
+            out["images"] = [fetch_images(cfg, env, 50 if a.cmd == "sync" else a.limit) for env in sorted({a.env, "test"})]
+        except LineTokenError as err:
+            out["images_error"] = str(err)
+        print(json.dumps({"env": a.env, "data_dir": str(cfg.data_dir), **out}, ensure_ascii=False))
+        sys.exit(1 if "images_error" in out else 0)
     if a.source == "file":
         if not a.path:
             ap.error("--path is required for --source file")
