@@ -138,3 +138,32 @@ def test_richmenu_draft_valid():
     bad = json.loads(json.dumps(menu))
     bad["areas"][1]["bounds"]["x"] = 800  # overlap
     assert any("overlap" in e for e in validate(bad))
+
+
+def _text_event(user, text, eid):
+    return {"type": "message", "mode": "active", "timestamp": 1764230400000, "webhookEventId": eid,
+            "source": {"type": "user", "userId": user}, "message": {"id": eid, "type": "text", "text": text}}
+
+
+ADMIN = "U0000000000000000000000000000000A"
+
+
+def test_admin_command_only_from_admin(tmp_path):
+    c = cfg(tmp_path, GPR_ADMIN_USER_IDS=ADMIN)
+    ok = normalise(_text_event(ADMIN, "#GPR คำนวณราคา", "e1"), "k", c)
+    assert ok["admin_command"] == "calculate_price" and ok["pricing_hint"] is None
+    pay = normalise(_text_event(ADMIN, "#GPR รับเงิน", "e2"), "k", c)
+    assert pay["admin_command"] == "payment_review" and pay["payment_confirmed"] is False
+    spoof = normalise(_text_event(U1, "#GPR สรุปงาน", "e3"), "k", c)
+    assert spoof["admin_command"] is None and "admin_command_from_non_admin_or_unknown" in spoof["needs_review"]
+    normal = normalise(_text_event(U1, "ไปดอนเมืองเท่าไหร่", "e4"), "k", c)
+    assert normal["admin_command"] is None and normal["pricing_hint"]["route_id"] == "DMK-BANGKOK"
+
+
+def test_richmenu_commands_match_adapter():
+    from gpr.line_inbox import ADMIN_COMMANDS, ADMIN_PREFIX
+    menu = json.loads((ROOT / "line" / "richmenu" / "richmenu.json").read_text(encoding="utf-8"))
+    for a in menu["areas"]:
+        t = a["action"]["text"]
+        assert t.startswith(ADMIN_PREFIX) and t[len(ADMIN_PREFIX):].strip() in ADMIN_COMMANDS
+    assert menu["name"].startswith("gpr-admin")

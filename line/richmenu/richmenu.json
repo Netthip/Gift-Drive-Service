@@ -1,15 +1,16 @@
 {
-  "_comment": "DRAFT 6-slot layout (3x2). Labels/texts are placeholders until Bo's design is confirmed. Message actions only: the tap sends a keyword into the chat, which lands in the LINE inbox for Bo/Gift. No postback handling, no auto-reply from this system.",
+  "_comment": "ADMIN rich menu (Bo's design, 3x2). Gift-only tools: link to Gift's LINE userId with `gpr.richmenu apply --link-admin`, NEVER set as default (customers would see it). Each tap sends a '#GPR <command>' message into the OA chat; it arrives in the LINE inbox and gpr.line_inbox tags it as admin_command. No auto-reply.",
+  "_image": "line/richmenu/richmenu-admin.jpg",
   "size": {"width": 2500, "height": 1686},
-  "selected": false,
-  "name": "gpr-main-v1-draft",
-  "chatBarText": "เมนู / 菜单",
+  "selected": true,
+  "name": "gpr-admin-v1",
+  "chatBarText": "เมนู GPR",
   "areas": [
-    {"bounds": {"x": 0,    "y": 0,   "width": 833, "height": 843}, "action": {"type": "message", "label": "ราคา 价格",     "text": "ขอดูราคา / 查看价格"}},
-    {"bounds": {"x": 833,  "y": 0,   "width": 834, "height": 843}, "action": {"type": "message", "label": "รับส่งสนามบิน 接送机", "text": "รับส่งสนามบิน / 机场接送"}},
-    {"bounds": {"x": 1667, "y": 0,   "width": 833, "height": 843}, "action": {"type": "message", "label": "เหมาวัน 包车",   "text": "เหมารถรายวัน / 包车一日游"}},
-    {"bounds": {"x": 0,    "y": 843, "width": 833, "height": 843}, "action": {"type": "message", "label": "จองคิว 预约",    "text": "ขอจองคิว / 我想预约"}},
-    {"bounds": {"x": 833,  "y": 843, "width": 834, "height": 843}, "action": {"type": "message", "label": "รถและกระเป๋า 车辆行李", "text": "ข้อมูลรถและกระเป๋า / 车辆与行李"}},
-    {"bounds": {"x": 1667, "y": 843, "width": 833, "height": 843}, "action": {"type": "message", "label": "คุยกับแอดมิน 人工客服", "text": "ขอคุยกับแอดมิน / 人工客服"}}
+    {"bounds": {"x": 0,    "y": 0,   "width": 833, "height": 843}, "action": {"type": "message", "label": "แปลแชท",     "text": "#GPR แปลแชท"}},
+    {"bounds": {"x": 833,  "y": 0,   "width": 834, "height": 843}, "action": {"type": "message", "label": "ลูกค้า",      "text": "#GPR ลูกค้า"}},
+    {"bounds": {"x": 1667, "y": 0,   "width": 833, "height": 843}, "action": {"type": "message", "label": "เช็กคิว",     "text": "#GPR เช็กคิว"}},
+    {"bounds": {"x": 0,    "y": 843, "width": 833, "height": 843}, "action": {"type": "message", "label": "รับเงิน",      "text": "#GPR รับเงิน"}},
+    {"bounds": {"x": 833,  "y": 843, "width": 834, "height": 843}, "action": {"type": "message", "label": "คำนวณราคา",  "text": "#GPR คำนวณราคา"}},
+    {"bounds": {"x": 1667, "y": 843, "width": 833, "height": 843}, "action": {"type": "message", "label": "สรุปงาน",     "text": "#GPR สรุปงาน"}}
   ]
 }

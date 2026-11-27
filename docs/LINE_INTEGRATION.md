@@ -20,6 +20,7 @@
 | `CF_KV_NAMESPACE_ID` | `--source kv` | ID ของ namespace `gpr-line-inbox` (ไม่ใช่ชื่อ binding) |
 | `CF_API_TOKEN` | `--source kv` | **สร้าง token ใหม่สิทธิ์ต่ำสุด:** Account → Workers KV Storage → **Read** เท่านั้น จำกัดเฉพาะ account นี้ ตั้งวันหมดอายุ |
 | `GPR_ID_SALT` | `--env prod` | สุ่มยาว ≥ 16 ตัว ใช้ทำรหัสลูกค้าแบบนามแฝง (`cust_…`) เปลี่ยนแล้วรหัสลูกค้าจะเปลี่ยนทั้งหมด |
+| `GPR_ADMIN_USER_IDS` | แนะนำ | LINE userId ของ Gift — คำสั่ง `#GPR …` จากเมนูผู้ดูแลนับเฉพาะจากบัญชีนี้ |
 | `GPR_TEST_USER_IDS` | แนะนำ | LINE userId ของ Gift/บัญชีทดสอบ คั่นด้วย `,` → ข้อความจากบัญชีนี้ไปที่ `test` เสมอ แม้รันแบบ prod |
 | `GPR_DATA_DIR` | ไม่บังคับ | ค่าเริ่มต้น `~/.gpr` (ต้องอยู่นอก repo) |
 
@@ -49,8 +50,18 @@ python -m gpr.handoff --record rec.json --booking booking.json
 1. Worker เก็บอะไรใน KV จริง: key pattern และ value เป็น webhook body ทั้งก้อนหรือ event เดี่ยว — adapter รองรับ `{events:[…]}`, event เดี่ยว, และห่อแบบ `{event|body|payload|data: …}` (รวม string JSON) ถ้าเป็นแบบอื่นจะนับเป็น `unparsed` และไม่ทำอะไรต่อ
 2. key ทดสอบมี prefix อะไร (ใช้กับ `--prefix`)
 
-## Rich Menu (ร่าง 6 ช่อง)
-`line/richmenu/richmenu.json` — 2500×1686 แบ่ง 3×2 · ปุ่มเป็น message action (กดแล้วข้อความเข้า inbox ให้คนตอบ ไม่มีบอทตอบเอง)
-**ข้อความ/ชื่อปุ่มยังเป็นร่าง รอแบบจาก Bo** · ตรวจ: `python -m gpr.richmenu validate line/richmenu/richmenu.json`
-ใช้จริง (เปลี่ยนบัญชี LINE production — Gift รันเองหลังอนุมัติแบบและภาพ 2500×1686):
-`LINE_CHANNEL_ACCESS_TOKEN=… python -m gpr.richmenu apply line/richmenu/richmenu.json --image menu.png [--set-default]`
+## Rich Menu ผู้ดูแล (แบบของ BO, 6 ช่อง)
+ไฟล์: `line/richmenu/richmenu.json` + ภาพ `line/richmenu/richmenu-admin.jpg` (แปลงจากแบบของ BO เป็น 2500×1686 JPEG ≈ 0.5 MB)
+
+| แถวบน | แปลแชท | ลูกค้า | เช็กคิว |
+|---|---|---|---|
+| **แถวล่าง** | **รับเงิน** | **คำนวณราคา** | **สรุปงาน** |
+
+- เป็น **เมนูเครื่องมือของ Gift** ไม่ใช่เมนูลูกค้า → ผูกกับ LINE userId ของ Gift เท่านั้น (`--link-admin`) **ห้ามตั้งเป็นเมนูเริ่มต้น** ไม่งั้นลูกค้าทุกคนจะเห็นปุ่ม "รับเงิน/สรุปงาน"
+- กดแล้วส่งข้อความ `#GPR <คำสั่ง>` เข้าแชท OA → เข้า inbox → adapter ติด `admin_command` (translate_chat, customer_lookup, check_schedule, payment_review, calculate_price, daily_summary) **เฉพาะเมื่อผู้ส่งอยู่ใน `GPR_ADMIN_USER_IDS`** ถ้าลูกค้าพิมพ์เลียนแบบ → ติดธง `admin_command_from_non_admin_or_unknown`
+- ไม่มีบอทตอบกลับใน LINE: BO/JIHO ทำงานตามคำสั่งแล้วแสดงผลบนเครื่อง · `payment_review` = เปิดรายการสลิปรอตรวจ ไม่ใช่ยืนยันเงิน
+- ภาพถูกขยายจาก 1528×1029 → ภาพอาจเบลอเล็กน้อย ถ้า BO ส่งออกที่ 2500×1686 ได้จะคมกว่า
+- ตรวจ: `python -m gpr.richmenu validate line/richmenu/richmenu.json`
+- ใช้จริง (Gift รันเอง, เปลี่ยน LINE production):
+  `LINE_CHANNEL_ACCESS_TOKEN=… GPR_ADMIN_USER_ID=… python -m gpr.richmenu apply line/richmenu/richmenu.json --image line/richmenu/richmenu-admin.jpg --link-admin`
+- เมนูสำหรับลูกค้า (ถ้าต้องการ) เป็นอีกชุดแยกต่างหาก ยังไม่ได้ทำ

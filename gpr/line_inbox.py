@@ -14,6 +14,7 @@ Config comes only from environment variables (never from the repo or chat):
   CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID, CF_API_TOKEN   # kv source only
   GPR_ID_SALT          # HMAC key for pseudonymous customer refs (required for --env prod)
   GPR_TEST_USER_IDS    # comma-separated LINE userIds whose events are always treated as test
+  GPR_ADMIN_USER_IDS   # comma-separated LINE userIds allowed to send '#GPR <command>' (Gift)
   GPR_DATA_DIR         # private data dir, default ~/.gpr (outside the repo)
 
 Usage
@@ -41,6 +42,15 @@ from gpr.pricing import resolve_route
 
 SCHEMA_VERSION = "1.0"
 ENVS = ("test", "prod")
+ADMIN_PREFIX = "#GPR"
+ADMIN_COMMANDS = {  # rich menu (line/richmenu/richmenu.json) -> command id for Bo
+    "แปลแชท": "translate_chat",
+    "ลูกค้า": "customer_lookup",
+    "เช็กคิว": "check_schedule",
+    "รับเงิน": "payment_review",   # review only; payment_confirmed stays False
+    "คำนวณราคา": "calculate_price",
+    "สรุปงาน": "daily_summary",
+}
 CF_API = "https://api.cloudflare.com/client/v4"
 
 
@@ -51,6 +61,7 @@ class Config:
     data_dir: Path
     id_salt: bytes
     test_user_ids: frozenset[str]
+    admin_user_ids: frozenset[str] = frozenset()
 
     @classmethod
     def from_env(cls, env: str, environ: dict | None = None) -> "Config":
@@ -61,8 +72,9 @@ class Config:
         if env == "prod" and len(salt) < 16:
             raise SystemExit("GPR_ID_SALT (>=16 chars) is required for --env prod")
         base = Path(e.get("GPR_DATA_DIR", Path.home() / ".gpr")).expanduser()
-        ids = frozenset(x.strip() for x in e.get("GPR_TEST_USER_IDS", "").split(",") if x.strip())
-        return cls(env, base, (salt or "gpr-test-only-salt").encode(), ids)
+        def ids(name: str) -> frozenset[str]:
+            return frozenset(x.strip() for x in e.get(name, "").split(",") if x.strip())
+        return cls(env, base, (salt or "gpr-test-only-salt").encode(), ids("GPR_TEST_USER_IDS"), ids("GPR_ADMIN_USER_IDS"))
 
     def dir_for(self, env: str) -> Path:
         d = self.data_dir / env
@@ -196,8 +208,16 @@ def normalise(event: dict, kv_key: str, cfg: Config, pricing_data: dict | None =
 
     message: dict = {"id": msg.get("id"), "type": mtype or event.get("type", "unknown")}
     pricing_hint = None
+    admin_command = None
     if mtype == "text":
         message["text"] = msg.get("text", "")
+        t = message["text"].strip()
+        if t.startswith(ADMIN_PREFIX):
+            cmd = ADMIN_COMMANDS.get(t[len(ADMIN_PREFIX):].strip())
+            if user_id and user_id in cfg.admin_user_ids and cmd:
+                admin_command = cmd
+            else:
+                review.append("admin_command_from_non_admin_or_unknown")
         rid = resolve_route(message["text"], "", pricing_data or load_pricing())
         pricing_hint = {"route_id": rid, "source": "keyword_match_on_text", "note": "hint only; Bo extracts booking fields then runs gpr.pricing"}
     elif mtype == "image":
@@ -232,7 +252,8 @@ def normalise(event: dict, kv_key: str, cfg: Config, pricing_data: dict | None =
             "group_ref": _ref("grp", src.get("groupId") or src.get("roomId"), cfg.id_salt),
         },
         "message": message,
-        "pricing_hint": pricing_hint,
+        "pricing_hint": None if admin_command else pricing_hint,
+        "admin_command": admin_command,
         "needs_review": review,
         "reply_allowed": False,       # this pipeline never replies; Gift sends manually
         "booking_confirmed": False,   # only Gift can confirm

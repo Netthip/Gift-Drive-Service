@@ -48,6 +48,7 @@
         "note": {"type": "string"}
       }
     },
+    "admin_command": {"enum": [null, "translate_chat", "customer_lookup", "check_schedule", "payment_review", "calculate_price", "daily_summary"], "description": "Set only for '#GPR <cmd>' from GPR_ADMIN_USER_IDS (Gift's rich menu)"},
     "needs_review": {"type": "array", "items": {"type": "string"}},
     "reply_allowed": {"const": false},
     "booking_confirmed": {"const": false},

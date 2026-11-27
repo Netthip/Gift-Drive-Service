@@ -2,10 +2,11 @@
 Validate (default) or create (explicit --apply) the GPR LINE rich menu.
 
     python -m gpr.richmenu validate line/richmenu/richmenu.json
-    python -m gpr.richmenu apply line/richmenu/richmenu.json --image menu.png [--set-default]
+    python -m gpr.richmenu apply line/richmenu/richmenu.json --image line/richmenu/richmenu-admin.jpg --link-admin
 
-apply needs LINE_CHANNEL_ACCESS_TOKEN in the environment (never in the repo/chat) and changes
-the PRODUCTION LINE account -> Gift runs it only after approving Bo's design and image.
+apply needs LINE_CHANNEL_ACCESS_TOKEN and GPR_ADMIN_USER_ID (Gift's LINE userId) in the
+environment (never in the repo/chat) and changes the PRODUCTION LINE account -> Gift runs it.
+The admin menu is linked ONLY to Gift's userId; it is never set as the default menu.
 """
 from __future__ import annotations
 
@@ -57,6 +58,22 @@ def validate(menu: dict, expected_areas: int = 6) -> list[str]:
     return errs
 
 
+def validate_image(path: Path, menu: dict) -> list[str]:
+    errs = []
+    if path.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+        errs.append("image must be PNG or JPEG")
+    if path.stat().st_size > 1_000_000:
+        errs.append("image must be <= 1 MB")
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            if im.size != (menu["size"]["width"], menu["size"]["height"]):
+                errs.append(f"image {im.size} != menu size")
+    except ImportError:
+        pass
+    return errs
+
+
 def _post(url: str, token: str, body: bytes, ctype: str) -> dict:
     req = urllib.request.Request(url, data=body, method="POST",
                                  headers={"Authorization": f"Bearer {token}", "Content-Type": ctype})
@@ -65,16 +82,19 @@ def _post(url: str, token: str, body: bytes, ctype: str) -> dict:
     return json.loads(raw) if raw else {}
 
 
-def apply(menu: dict, image: Path, set_default: bool) -> str:
+def apply(menu: dict, image: Path, link_admin: bool) -> str:
     token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
+    admin = os.environ.get("GPR_ADMIN_USER_ID", "")
     if not token:
         raise SystemExit("LINE_CHANNEL_ACCESS_TOKEN not set")
+    if link_admin and not admin:
+        raise SystemExit("GPR_ADMIN_USER_ID not set")
     body = {k: v for k, v in menu.items() if not k.startswith("_")}
     rid = _post(f"{API}/richmenu", token, json.dumps(body, ensure_ascii=False).encode(), "application/json")["richMenuId"]
     ctype = "image/png" if image.suffix.lower() == ".png" else "image/jpeg"
     _post(f"{DATA_API}/richmenu/{rid}/content", token, image.read_bytes(), ctype)
-    if set_default:
-        _post(f"{API}/user/all/richmenu/{rid}", token, b"", "application/json")
+    if link_admin:  # per-user link; customers keep the default (or no) menu
+        _post(f"{API}/user/{admin}/richmenu/{rid}", token, b"", "application/json")
     return rid
 
 
@@ -86,7 +106,7 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("apply")
     p.add_argument("menu", type=Path)
     p.add_argument("--image", type=Path, required=True)
-    p.add_argument("--set-default", action="store_true")
+    p.add_argument("--link-admin", action="store_true", help="link to GPR_ADMIN_USER_ID only")
     a = ap.parse_args(argv)
 
     menu = json.loads(a.menu.read_text(encoding="utf-8"))
@@ -94,12 +114,18 @@ def main(argv: list[str] | None = None) -> None:
     if errs:
         print("INVALID:\n- " + "\n- ".join(errs))
         sys.exit(1)
+    img = a.image if a.cmd == "apply" else Path(menu.get("_image", ""))
+    if img and img.is_file():
+        errs += validate_image(img, menu)
+    if errs:
+        print("INVALID:\n- " + "\n- ".join(errs))
+        sys.exit(1)
     if a.cmd == "validate":
-        print("OK: 6 areas, no overlap, full coverage, actions valid")
+        print("OK: 6 areas, no overlap, full coverage, actions valid" + (f", image {img} OK" if img and img.is_file() else ", no image checked"))
         return
     if input("This changes the PRODUCTION LINE account. Type APPLY to continue: ") != "APPLY":
         sys.exit("aborted")
-    print("richMenuId:", apply(menu, a.image, a.set_default))
+    print("richMenuId:", apply(menu, a.image, a.link_admin))
 
 
 if __name__ == "__main__":
