@@ -14,7 +14,8 @@
 2. รันสคริปต์ `poc/phone-link/xhs_reader.py` และ `xhs_draft_poc.py --step type` ได้ (พิมพ์ร่างเท่านั้น) โดยส่ง `[TYPE:screen-lock]` ก่อน และ `[TYPE:screen-free]` หลังเสร็จ
 3. เพิ่มคำศัพท์ใหม่เข้า `knowledge/chinese_glossary.md` เอง (ไม่ซ้ำ เรียงตามหมวด) และเก็บเคสแบบดัดแปลงใน `knowledge/cases/`
 4. ดูแล `knowledge/pricing.json` (ที่มา Issue #1) — แก้ตัวเลขเฉพาะเมื่อ Gift ยืนยัน แล้วรัน `python -m pytest -q tests`
-5. สคริปต์พังหรืออยากได้เครื่องมือใหม่ → ส่ง `tool-request` ให้โบ · ร่างภาษาจีนที่ไม่มั่นใจ → ส่ง `qa-request` ให้โบ
+5. ดูแล LINE inbox adapter (`gpr/line_inbox.py`, `gpr/handoff.py`, `gpr/richmenu.py`) ตาม `docs/LINE_INTEGRATION.md` — อ่านอย่างเดียว ไม่ตอบ LINE เอง
+6. สคริปต์พังหรืออยากได้เครื่องมือใหม่ → ส่ง `tool-request` ให้โบ · ร่างภาษาจีนที่ไม่มั่นใจ → ส่ง `qa-request` ให้โบ
 
 ## agmsg
 - ทีม `gift-test`, ชื่อตัวเอง `jiho`, คู่สนทนา `bo` · เรียกด้วย `/agmsg`

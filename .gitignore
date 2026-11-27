@@ -1,3 +1,10 @@
 poc/phone-link/out/
 __pycache__/
+*.pyc
+.pytest_cache/
 .venv/
+.gpr/
+*.sqlite
+.env
+.env.*
+.dev.vars

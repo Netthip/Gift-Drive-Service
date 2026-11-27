@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Netthip/Gift-Drive-Service/schemas/gpr_inbox_message.schema.json",
+  "title": "GPR inbox message (handoff to Bo)",
+  "description": "One normalised inbound message. Produced by gpr.line_inbox; contains pseudonymous refs only. Real records live in the private GPR_DATA_DIR, never in the repo.",
+  "type": "object",
+  "required": ["schema_version", "env", "channel", "dedup_key", "source", "message", "needs_review", "reply_allowed", "booking_confirmed", "payment_confirmed"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "env": {"enum": ["test", "prod"]},
+    "channel": {"enum": ["line"]},
+    "event_id": {"type": ["string", "null"], "description": "LINE webhookEventId (stable across redelivery)"},
+    "dedup_key": {"type": "string", "pattern": "^line:(evt|msg|sha):"},
+    "is_redelivery": {"type": "boolean"},
+    "occurred_at": {"type": ["string", "null"], "format": "date-time"},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {"type": ["string", "null"], "enum": ["user", "group", "room", null]},
+        "customer_ref": {"type": ["string", "null"], "pattern": "^cust_[0-9a-f]{16}$", "description": "HMAC of LINE userId with GPR_ID_SALT"},
+        "group_ref": {"type": ["string", "null"], "pattern": "^grp_[0-9a-f]{16}$"}
+      }
+    },
+    "message": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "id": {"type": ["string", "null"]},
+        "type": {"type": "string"},
+        "text": {"type": "string"},
+        "image": {
+          "type": "object",
+          "properties": {
+            "content_provider": {"type": "string"},
+            "fetch": {"const": "server_side_only"},
+            "image_set": {"type": ["string", "null"]}
+          }
+        }
+      }
+    },
+    "pricing_hint": {
+      "type": ["object", "null"],
+      "properties": {
+        "route_id": {"type": ["string", "null"]},
+        "source": {"type": "string"},
+        "note": {"type": "string"}
+      }
+    },
+    "needs_review": {"type": "array", "items": {"type": "string"}},
+    "reply_allowed": {"const": false},
+    "booking_confirmed": {"const": false},
+    "payment_confirmed": {"const": false},
+    "kv_key": {"type": "string"}
+  }
+}

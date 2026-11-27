@@ -1,0 +1,73 @@
+[
+  {
+    "_kv_key": "synthetic:0001",
+    "destination": "Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "events": [
+      {
+        "type": "message",
+        "mode": "active",
+        "timestamp": 1764230400000,
+        "webhookEventId": "01TESTEVENT0000000000000001",
+        "deliveryContext": {"isRedelivery": false},
+        "source": {"type": "user", "userId": "U00000000000000000000000000000001"},
+        "replyToken": "synthetic-reply-token-not-real",
+        "message": {"id": "900000000000000001", "type": "text", "quoteToken": "q1",
+                    "text": "你好，11月30号晚上11点40到素万那普机场，2个大人1个小孩，一个28寸一个24寸，去素坤逸多少钱？"}
+      }
+    ]
+  },
+  {
+    "_kv_key": "synthetic:0002",
+    "destination": "Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "events": [
+      {
+        "type": "message",
+        "mode": "active",
+        "timestamp": 1764230460000,
+        "webhookEventId": "01TESTEVENT0000000000000002",
+        "deliveryContext": {"isRedelivery": false},
+        "source": {"type": "user", "userId": "U00000000000000000000000000000002"},
+        "message": {"id": "900000000000000002", "type": "image", "contentProvider": {"type": "line"}}
+      }
+    ]
+  },
+  {
+    "_kv_key": "synthetic:0003",
+    "event": {
+      "type": "message",
+      "mode": "active",
+      "timestamp": 1764230400000,
+      "webhookEventId": "01TESTEVENT0000000000000001",
+      "deliveryContext": {"isRedelivery": true},
+      "source": {"type": "user", "userId": "U00000000000000000000000000000001"},
+      "message": {"id": "900000000000000001", "type": "text", "text": "你好，11月30号晚上11点40到素万那普机场，2个大人1个小孩，一个28寸一个24寸，去素坤逸多少钱？"}
+    }
+  },
+  {
+    "_kv_key": "synthetic:0004",
+    "body": "{\"events\":[{\"type\":\"message\",\"mode\":\"active\",\"timestamp\":1764230520000,\"webhookEventId\":\"01TESTEVENT0000000000000003\",\"deliveryContext\":{\"isRedelivery\":false},\"source\":{\"type\":\"user\",\"userId\":\"U00000000000000000000000000000003\"},\"message\":{\"id\":\"900000000000000003\",\"type\":\"text\",\"text\":\"สวัสดีค่ะ จะไปพัทยา 2 คน ขอส่วนลดได้ไหมคะ\"}}]}"
+  },
+  {
+    "_kv_key": "synthetic:0005",
+    "events": [
+      {
+        "type": "follow",
+        "mode": "active",
+        "timestamp": 1764230580000,
+        "webhookEventId": "01TESTEVENT0000000000000004",
+        "deliveryContext": {"isRedelivery": false},
+        "source": {"type": "user", "userId": "U00000000000000000000000000000004"}
+      },
+      {
+        "type": "message",
+        "mode": "active",
+        "timestamp": 1764230590000,
+        "webhookEventId": "01TESTEVENT0000000000000005",
+        "deliveryContext": {"isRedelivery": false},
+        "source": {"type": "user"},
+        "message": {"id": "900000000000000005", "type": "sticker", "packageId": "1", "stickerId": "1"}
+      }
+    ]
+  },
+  {"_kv_key": "synthetic:0006", "note": "not a LINE payload"}
+]

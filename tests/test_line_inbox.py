@@ -1,0 +1,140 @@
+"""Issue #2 synthetic tests: adapter, dedup, test/prod isolation, schema, pricing, rich menu."""
+import json
+from pathlib import Path
+
+import pytest
+
+from gpr.handoff import price_booking
+from gpr.line_inbox import Config, KVSource, extract_events, file_source, normalise, pull
+from gpr.richmenu import validate
+
+ROOT = Path(__file__).resolve().parent.parent
+FIX = ROOT / "tests" / "fixtures" / "line_webhook_synthetic.json"
+SCHEMA = json.loads((ROOT / "schemas" / "gpr_inbox_message.schema.json").read_text(encoding="utf-8"))
+U1, U3 = "U00000000000000000000000000000001", "U00000000000000000000000000000003"
+
+
+def cfg(tmp_path, env="test", **extra):
+    e = {"GPR_DATA_DIR": str(tmp_path), "GPR_ID_SALT": "unit-test-salt-0123456789", **extra}
+    return Config.from_env(env, e)
+
+
+def outbox(tmp_path, env):
+    p = tmp_path / env / "outbox.jsonl"
+    return [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines()] if p.exists() else []
+
+
+def test_extract_all_wrapper_shapes():
+    items = list(file_source(FIX))
+    counts = [len(extract_events(i.payload)) for i in items]
+    assert counts == [1, 1, 1, 1, 2, 0]  # body, body, {event}, {body: str}, 2 events, junk
+
+
+def test_text_and_image_normalised(tmp_path):
+    c = cfg(tmp_path)
+    ev_text, ev_img = (extract_events(i.payload)[0] for i in list(file_source(FIX))[:2])
+    t, im = normalise(ev_text, "k1", c), normalise(ev_img, "k2", c)
+    assert t["message"]["type"] == "text" and "素万那普" in t["message"]["text"]
+    assert t["pricing_hint"]["route_id"] == "BKK-BANGKOK"
+    assert im["message"]["image"]["fetch"] == "server_side_only"
+    assert "image_needs_human_check" in im["needs_review"]
+    for r in (t, im):
+        assert r["reply_allowed"] is False and r["booking_confirmed"] is False and r["payment_confirmed"] is False
+        assert U1 not in json.dumps(r) and "replyToken" not in json.dumps(r)  # no raw ids / reply token
+
+
+def test_dedup_redelivery_and_rerun(tmp_path):
+    c = cfg(tmp_path)
+    s1 = pull(file_source(FIX), c)
+    assert s1 == {"read": 6, "new": 5, "duplicate": 1, "unparsed": 1, "by_env": {"test": 5, "prod": 0}}
+    s2 = pull(file_source(FIX), c)  # same data again -> nothing new
+    assert s2["new"] == 0 and s2["duplicate"] == 6
+    keys = [r["dedup_key"] for r in outbox(tmp_path, "test")]
+    assert len(keys) == len(set(keys)) == 5
+
+
+def test_test_prod_isolation(tmp_path):
+    c = cfg(tmp_path, env="prod", GPR_TEST_USER_IDS=U3)
+    s = pull(file_source(FIX), c)
+    assert s["by_env"] == {"test": 1, "prod": 4}
+    assert all(r["env"] == "test" for r in outbox(tmp_path, "test"))
+    assert all(r["env"] == "prod" for r in outbox(tmp_path, "prod"))
+    assert (tmp_path / "test" / "state.sqlite").exists() and (tmp_path / "prod" / "state.sqlite").exists()
+
+
+def test_prod_requires_salt(tmp_path):
+    with pytest.raises(SystemExit):
+        Config.from_env("prod", {"GPR_DATA_DIR": str(tmp_path)})
+
+
+def test_unknown_identity_and_unsupported_flagged(tmp_path):
+    pull(file_source(FIX), cfg(tmp_path))
+    recs = {r["event_id"]: r for r in outbox(tmp_path, "test")}
+    assert "non_message_event:follow" in recs["01TESTEVENT0000000000000004"]["needs_review"]
+    sticker = recs["01TESTEVENT0000000000000005"]
+    assert "unknown_identity" in sticker["needs_review"] and sticker["source"]["customer_ref"] is None
+
+
+def test_customer_ref_stable_and_salted(tmp_path):
+    ev = extract_events(next(file_source(FIX)).payload)[0]
+    a = normalise(ev, "k", cfg(tmp_path))["source"]["customer_ref"]
+    b = normalise(ev, "k", cfg(tmp_path))["source"]["customer_ref"]
+    other = normalise(ev, "k", Config.from_env("test", {"GPR_DATA_DIR": str(tmp_path), "GPR_ID_SALT": "another-salt-xxxxxxxx"}))
+    assert a == b != other["source"]["customer_ref"]
+
+
+def _check_schema(rec, schema):
+    for k in schema["required"]:
+        assert k in rec, k
+    assert set(rec) <= set(schema["properties"]), set(rec) - set(schema["properties"])
+    assert rec["env"] in schema["properties"]["env"]["enum"]
+
+
+def test_records_match_schema(tmp_path):
+    pull(file_source(FIX), cfg(tmp_path))
+    for r in outbox(tmp_path, "test"):
+        _check_schema(r, SCHEMA)
+
+
+def test_handoff_uses_existing_pricing(tmp_path):
+    rec = normalise(extract_events(next(file_source(FIX)).payload)[0], "k", cfg(tmp_path))
+    booking = {"from": "素万那普机场", "to": "素坤逸", "time": "23:40", "adults": 2, "children": 1,
+               "bags": {"sizes_inch": [28, 24]}}
+    out = price_booking(rec, booking)
+    assert out["route_id"] == "BKK-BANGKOK" and out["quote"]["total_min"] == 900
+    assert out["group"] == "ทั่วไป" and out["reply_allowed"] is False
+    disc = price_booking(rec, {"from": "曼谷", "to": "芭提雅", "time": "10:00", "adults": 2,
+                               "bags": {"sizes_inch": [24]}, "discount_requested": True})
+    assert disc["group"] == "ส่งให้ Gift"
+
+
+def test_kv_source_is_read_only_and_paginates():
+    calls = []
+
+    class Resp:
+        def __init__(self, body): self.body = body
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return self.body
+
+    pages = [{"success": True, "result": [{"name": "a"}], "result_info": {"cursor": "c2"}},
+             {"success": True, "result": [{"name": "b"}], "result_info": {"cursor": ""}}]
+
+    def opener(req, timeout):
+        calls.append((req.get_method(), req.full_url))
+        if "/keys" in req.full_url:
+            return Resp(json.dumps(pages.pop(0)).encode())
+        return Resp(json.dumps({"events": []}).encode())
+
+    src = KVSource({"CF_ACCOUNT_ID": "acc", "CF_KV_NAMESPACE_ID": "ns", "CF_API_TOKEN": "t"}, opener=opener)
+    items = list(src.items(prefix="", limit=10))
+    assert [i.key for i in items] == ["a", "b"]
+    assert all(m == "GET" for m, _ in calls)
+
+
+def test_richmenu_draft_valid():
+    menu = json.loads((ROOT / "line" / "richmenu" / "richmenu.json").read_text(encoding="utf-8"))
+    assert validate(menu) == []
+    bad = json.loads(json.dumps(menu))
+    bad["areas"][1]["bounds"]["x"] = 800  # overlap
+    assert any("overlap" in e for e in validate(bad))
